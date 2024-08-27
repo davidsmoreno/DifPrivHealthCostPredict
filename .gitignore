@@ -36,3 +36,10 @@
 *.csv
 *.dat
 *.pkl
+
+# Drive
+*.ini
+
+
+# Ambiente
+*venv*
