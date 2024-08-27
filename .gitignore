@@ -40,6 +40,29 @@
 # Drive
 *.ini
 
+# Entornos virtuales
+venv/
+.venv/
+venv\
+.venv\
+
+# Archivos de configuración de editor
+.vscode/
+*.code-workspace
+
+# Archivos de caché
+__pycache__/
+*.pyc
+*.pyo
+
+# Archivos de sistema
+.DS_Store
+.env
+.gitignore
+
+# Drive
+*.ini
+
 
 # Ambiente
 *venv*
