@@ -59,10 +59,3 @@ __pycache__/
 .DS_Store
 .env
 .gitignore
-
-# Drive
-*.ini
-
-
-# Ambiente
-*venv*
