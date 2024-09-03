@@ -1,0 +1,2 @@
+from Algoritmos.dif_priv_cat_var import PrivacidadDiferencialCategoricaNumpy, PrivacidadDiferencialCategoricaTensor
+import pandas as pd

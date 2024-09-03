@@ -79,3 +79,5 @@ privacidad_tensor = PrivacidadDiferencialCategoricaTensor(epsilon=0.5)
 tensor_anonimizado_tensor = privacidad_tensor.anonimizar_categoria(tensor_categorico, categorias_unicas)
 print("Tensor anonimizado con PyTorch:")
 print(tensor_anonimizado_tensor)
+
+
