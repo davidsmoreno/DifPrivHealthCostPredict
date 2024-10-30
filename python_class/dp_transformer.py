@@ -5,7 +5,7 @@ from dp_mechanisms.categorical import direct_encoding, optimized_unary_encoding,
 from dp_plotting import plot_mean_vs_privatized, plot_histograms
 
 class DifferentialPrivacyTransformer:
-    def __init__(self, df, epsilon=1.0, quantitative_vars=None, qualitative_vars=None):
+    def __init__(self, df, epsilon=1.0, quantitative_vars=None, categorical_vars=None):
         """
         Inicializa el Transformador de Privacidad Diferencial.
 
@@ -13,22 +13,24 @@ class DifferentialPrivacyTransformer:
         df (pd.DataFrame): DataFrame de entrada.
         epsilon (float): Presupuesto de privacidad. Por defecto es 1.0.
         quantitative_vars (list de str): Lista de variables cuantitativas.
-        qualitative_vars (list de str): Lista de variables cualitativas.
+        categorical_vars (list de str): Lista de variables cualitativas.
         """
         self.df = df.copy()
         self.epsilon = epsilon
         self.quantitative_vars = quantitative_vars
-        self.qualitative_vars = qualitative_vars
+        self.categorical_vars = categorical_vars
         self.df_transformed = df.copy()
 
         # Identificar variables si no se proporcionan
-        if self.quantitative_vars is None and self.qualitative_vars is None:
+        if self.quantitative_vars is None and self.categorical_vars is None:
             self.quantitative_vars = df.select_dtypes(include=np.number).columns.tolist()
-            self.qualitative_vars = df.select_dtypes(exclude=np.number).columns.tolist()
+            self.categorical_vars = df.select_dtypes(exclude=np.number).columns.tolist()
         elif self.quantitative_vars is None:
-            self.quantitative_vars = [col for col in df.columns if col not in self.qualitative_vars and pd.api.types.is_numeric_dtype(df[col])]
-        elif self.qualitative_vars is None:
-            self.qualitative_vars = [col for col in df.columns if col not in self.quantitative_vars and not pd.api.types.is_numeric_dtype(df[col])]
+            self.quantitative_vars = [col for col in df.columns if col not in self.categorical_vars and pd.api.types.is_numeric_dtype(df[col])]
+        elif self.categorical_vars is None:
+            self.categorical_vars = [col for col in df.columns if col not in self.quantitative_vars and not pd.api.types.is_numeric_dtype(df[col])]
+            
+        return
 
     def fit_quantitative(self, quantitative_vars=None, method='duchi'):
         """
@@ -70,30 +72,30 @@ class DifferentialPrivacyTransformer:
             denormalized_col = (transformed_col + 1) * (col_max - col_min) / 2 + col_min
             self.df_transformed[col] = denormalized_col
 
-        return self.df_transformed
+        return
 
-    def fit_qualitative(self, qualitative_vars=None, method='direct_encoding'):
+    def fit_categorical(self, categorical_vars=None, method='direct_encoding'):
         """
         Aplica mecanismos de privacidad diferencial a variables cualitativas.
 
         Parámetros:
-        qualitative_vars (list de str): Lista de variables cualitativas a transformar.
+        categorical_vars (list de str): Lista de variables cualitativas a transformar.
         method (str): Método a utilizar ('direct_encoding', 'oue', 'rappor').
 
         Devuelve:
         pd.DataFrame: DataFrame con variables cualitativas transformadas.
         """
         # Usar variables proporcionadas o las de la clase
-        if qualitative_vars is not None:
-            self.qualitative_vars = qualitative_vars
+        if categorical_vars is not None:
+            self.categorical_vars = categorical_vars
 
         # Verificar que hay variables cualitativas
-        if not self.qualitative_vars:
+        if not self.categorical_vars:
             print("No hay variables cualitativas para transformar.")
             return self.df_transformed
 
         # Aplicar el método seleccionado a cada variable
-        for col in self.qualitative_vars:
+        for col in self.categorical_vars:
             col_data = self.df[col].values
             if method == 'direct_encoding':
                 transformed_col = direct_encoding(col_data, self.epsilon)
@@ -105,7 +107,7 @@ class DifferentialPrivacyTransformer:
                 raise ValueError(f"Método desconocido: {method}")
             self.df_transformed[col] = transformed_col
 
-        return self.df_transformed
+        return
 
     def calculate_utility_metrics(self, variables=None):
         """
