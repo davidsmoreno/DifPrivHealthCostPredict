@@ -1,43 +1,52 @@
 import torch
+import numpy as np
+from sklearn.preprocessing import LabelEncoder
+
 
 def direct_encoding(categorical_data, epsilon):
     """
-    Aplica codificación directa a datos categóricos utilizando PyTorch.
+    Applies direct encoding to categorical data using PyTorch.
 
-    Parámetros:
-    - categorical_data (torch.Tensor o array-like): Datos categóricos de entrada.
-    - epsilon (float): Presupuesto de privacidad.
+    Parameters:
+    - categorical_data (array-like): Input categorical data.
+    - epsilon (float): Privacy budget.
 
-    Devuelve:
-    - torch.Tensor: Datos categóricos transformados con privacidad diferencial.
+    Returns:
+    - np.array: Differentially private transformed categorical data.
     """
-    # Convertir los datos de entrada a un tensor de PyTorch si no lo es
-    if not isinstance(categorical_data, torch.Tensor):
-        categorical_data = torch.tensor(categorical_data)
-    
-    # Obtener valores únicos y asignar índices inversos
-    unique_values, inverse_indices = torch.unique(categorical_data, return_inverse=True)
-    k = len(unique_values)  # Número de categorías únicas
+    # Convert the input data to a NumPy array if it's not already
+    if not isinstance(categorical_data, np.ndarray):
+        categorical_data = np.array(categorical_data)
 
-    # Calcular probabilidades p y q
+    # Ensure the data is of string type (if they are not already)
+    categorical_data = categorical_data.astype(str)
+
+    # Encode categories into numerical values using LabelEncoder
+    le = LabelEncoder()
+    categorical_data_encoded = le.fit_transform(categorical_data)
+    inverse_indices = torch.tensor(categorical_data_encoded, dtype=torch.long)
+
+    k = len(le.classes_)  # Number of unique categories
+
+    # Calculate probabilities p and q
     e_epsilon = torch.exp(torch.tensor(epsilon, dtype=torch.float32))
     p = e_epsilon / (e_epsilon + k - 1)
     q = 1 / (e_epsilon + k - 1)
 
-    # Crear matriz de probabilidades inicializada con q
+    # Create a probability matrix initialized with q
     probabilities = torch.full((len(categorical_data), k), q)
-    # Asignar la probabilidad p a la categoría original de cada dato
+    # Assign probability p to the original category of each data point
     probabilities[torch.arange(len(categorical_data)), inverse_indices] = p
 
-    # Generar valores aleatorios uniformes entre 0 y 1
+    # Generate uniform random values between 0 and 1
     random_vals = torch.rand(len(categorical_data), dtype=torch.float32)
-    # Calcular los umbrales acumulados para cada categoría
+    # Compute cumulative thresholds for each category
     thresholds = torch.cumsum(probabilities, dim=1)
-    # Determinar el índice de la categoría privatizada comparando los valores aleatorios con los umbrales
+    # Determine the privatized category index by comparing random values with thresholds
     privatized_indices = torch.sum(random_vals.unsqueeze(1) > thresholds, dim=1)
 
-    # Convertir los índices privatizados a los valores categóricos correspondientes
-    privatized_data = unique_values[privatized_indices]
+    # Map the privatized indices back to the original categories
+    privatized_data = le.inverse_transform(privatized_indices.numpy())
     return privatized_data
 
 def optimized_unary_encoding(categorical_data, epsilon):

@@ -1,3 +1,4 @@
+import numpy as np
 import torch
 
 def normalize_to_range(vector, min_range=-1.0, max_range=1.0):
@@ -35,71 +36,145 @@ def normalize_to_range(vector, min_range=-1.0, max_range=1.0):
 
     return normalized, min_val.item(), max_val.item()
 
-def denormalize_from_range(normalized_vector, min_val, max_val, min_range=-1.0, max_range=1.0):
+def denormalize_from_range(normalized_vector, min_val, max_val, min_range=-1, max_range=1):
     """
-    Desnormaliza un vector desde un rango especificado de vuelta a su rango original.
+    Denormalize a vector from a specified range back to its original range.
 
-    Parámetros:
-    - normalized_vector (torch.Tensor): El vector normalizado.
-    - min_val (float): El valor mínimo del vector original.
-    - max_val (float): El valor máximo del vector original.
-    - min_range (float): El valor mínimo del rango normalizado. Por defecto es -1.0.
-    - max_range (float): El valor máximo del rango normalizado. Por defecto es 1.0.
+    Parameters:
+    normalized_vector (torch.Tensor): The normalized vector.
+    min_val (float): The minimum value of the original vector.
+    max_val (float): The maximum value of the original vector.
+    min_range (float): The minimum value of the normalized range. Default is -1.
+    max_range (float): The maximum value of the normalized range. Default is 1.
 
-    Devuelve:
-    - denormalized (torch.Tensor): El vector desnormalizado.
+    Returns:
+    torch.Tensor: The denormalized vector.
     """
-    # Asegurar que normalized_vector es un tensor de tipo float32
-    if not isinstance(normalized_vector, torch.Tensor):
-        normalized_vector = torch.tensor(normalized_vector, dtype=torch.float32)
-    else:
-        normalized_vector = normalized_vector.clone().detach().float()
-
-    # Escalar de vuelta a [0, 1]
+    # Scale back to [0, 1]
     normalized_vector = (normalized_vector - min_range) / (max_range - min_range)
-    # Escalar al rango original [min_val, max_val]
+    # Scale to the original range [min_val, max_val]
     denormalized = normalized_vector * (max_val - min_val) + min_val
     return denormalized
 
 def duchi_mechanism(t_i_vector, epsilon):
     """
-    Aplica el mecanismo de Duchi et al. para privacidad diferencial a un vector numérico.
+    Applies the Duchi et al. mechanism for differential privacy to a numerical vector.
 
-    Parámetros:
-    - t_i_vector (torch.Tensor o array-like): Vector de entrada de números en el rango [-1, 1].
-    - epsilon (float): Presupuesto de privacidad (debe ser positivo).
+    Parameters:
+    - t_i_vector (torch.Tensor or array-like): Input vector of numbers in the range [-1, 1].
+    - epsilon (float): Privacy budget (must be positive).
 
-    Devuelve:
-    - t_i_star (torch.Tensor): Vector transformado con privacidad diferencial.
+    Returns:
+    - t_i_star (torch.Tensor): Transformed vector with differential privacy.
     """
     if epsilon <= 0:
-        raise ValueError("Epsilon debe ser un valor positivo.")
+        raise ValueError("Epsilon must be a positive value.")
 
-    # Convertir el vector a tensor si no lo es
+    # Convert the vector to a double-precision tensor
     if not isinstance(t_i_vector, torch.Tensor):
-        t_i_tensor = torch.tensor(t_i_vector, dtype=torch.float32)
+        t_i_tensor = torch.tensor(t_i_vector, dtype=torch.float64)
     else:
-        t_i_tensor = t_i_vector.clone().detach().float()
+        t_i_tensor = t_i_vector.clone().detach().double()
 
-    # Asegurar que los valores están en el rango [-1, 1]
+    # Ensure values are in the range [-1, 1]
     t_i_tensor = torch.clamp(t_i_tensor, -1.0, 1.0)
 
-    # Calcular e^epsilon y expresiones recurrentes
-    e_epsilon = torch.exp(torch.tensor(epsilon, dtype=torch.float32))
-    e_epsilon_plus_1 = e_epsilon + 1.0
-    e_epsilon_minus_1 = e_epsilon - 1.0
+    # Compute tanh(epsilon / 2) with high precision
+    epsilon_half = torch.tensor(epsilon / 2.0, dtype=torch.float64)
+    tanh_epsilon_half = torch.tanh(epsilon_half)
 
-    # Calcular la probabilidad p para la respuesta aleatoria
-    prob = 0.5 * (t_i_tensor + 1.0) * (e_epsilon / e_epsilon_plus_1) + \
-           (0.5 * (1.0 - t_i_tensor)) * (1.0 / e_epsilon_plus_1)
+    # Handle potential zero in tanh_epsilon_half to avoid division by zero
+    if torch.abs(tanh_epsilon_half) < 1e-10:
+        tanh_epsilon_half = torch.tensor(1e-10, dtype=torch.float64)
 
-    # Generar valores aleatorios según la distribución Bernoulli
+    # Compute the probability p(x)
+    prob = 0.5 * (1.0 + t_i_tensor * tanh_epsilon_half)
+
+    # Clamp probabilities to [0, 1]
+    prob = torch.clamp(prob, 0.0, 1.0)
+
+    # Sample Bernoulli variables
     u = torch.bernoulli(prob)
 
-    # Calcular el valor privatizado
-    t_i_star = ((2 * u) - 1.0) * (e_epsilon_plus_1 / e_epsilon_minus_1)
+    # Compute w = 1 / tanh(epsilon / 2)
+    w = 1.0 / tanh_epsilon_half
+
+    # Compute the privatized value
+    t_i_star = (2 * u - 1.0) * w
 
     return t_i_star
+
+def piecewise_mechanism(t_i_vector, epsilon):
+    """
+    Apply the Piecewise Mechanism for one-dimensional numerical data.
+
+    Parameters:
+    t_i_vector (np.array): Input vector of numbers within the range [-1, 1].
+    epsilon (float): Privacy budget.
+
+    Returns:
+    np.array: Transformed vector within the range [-C, C].
+    """
+    # Convert the vector to a PyTorch tensor
+    t_i_tensor = torch.tensor(t_i_vector, dtype=torch.float32)
+
+    # Ensure values are within the range [-1, 1]
+    t_i_tensor = torch.clamp(t_i_tensor, -1.0, 1.0)
+
+    # Calculate e^(epsilon/2) and C
+    e_epsilon_2 = torch.exp(torch.tensor(epsilon / 2.0))
+    C = (e_epsilon_2 + 1.0) / (e_epsilon_2 - 1.0)
+
+    # Calculate l(t_i) and r(t_i)
+    l = ((C + 1.0) / 2.0) * t_i_tensor - (C - 1.0) / 2.0
+    r = l + C - 1.0
+
+    # Generate random values for the decision
+    x = torch.rand_like(t_i_tensor)
+    threshold = e_epsilon_2 / (e_epsilon_2 + 1.0)
+    rand_uniform = torch.rand_like(t_i_tensor)
+
+    # Initialize the tensor for privatized values
+    t_i_star = torch.empty_like(t_i_tensor)
+
+    # Mask for x < threshold
+    mask1 = x < threshold
+    low1 = l
+    high1 = r
+    high1 = torch.where(high1 <= low1, low1 + 1e-5, high1)
+    t_i_star[mask1] = low1[mask1] + (high1[mask1] - low1[mask1]) * rand_uniform[mask1]
+
+    # Mask for x >= threshold
+    mask2 = ~mask1
+    interval_choice = torch.rand_like(t_i_tensor) < 0.5
+
+    # Combined masks
+    mask2_interval1 = mask2 & interval_choice  # Interval [-C, l(t_i)]
+    mask2_interval2 = mask2 & ~interval_choice  # Interval [r(t_i), C]
+
+    # Create 'low' and 'high' tensors for each interval
+    low2 = torch.empty_like(t_i_tensor)
+    high2 = torch.empty_like(t_i_tensor)
+
+    # Interval [-C, l(t_i)]
+    low2[mask2_interval1] = -C
+    high2[mask2_interval1] = l[mask2_interval1]
+    high2[mask2_interval1] = torch.where(high2[mask2_interval1] <= low2[mask2_interval1],
+                                         low2[mask2_interval1] + 1e-5,
+                                         high2[mask2_interval1])
+    t_i_star[mask2_interval1] = low2[mask2_interval1] + (high2[mask2_interval1] - low2[mask2_interval1]) * rand_uniform[mask2_interval1]
+
+    # Interval [r(t_i), C]
+    low2[mask2_interval2] = r[mask2_interval2]
+    high2[mask2_interval2] = C
+    high2[mask2_interval2] = torch.where(high2[mask2_interval2] <= low2[mask2_interval2],
+                                         low2[mask2_interval2] + 1e-5,
+                                         high2[mask2_interval2])
+    t_i_star[mask2_interval2] = low2[mask2_interval2] + (high2[mask2_interval2] - low2[mask2_interval2]) * rand_uniform[mask2_interval2]
+
+    # Convert the tensor to a NumPy array and return it
+    return t_i_star.numpy()
+
 
 def laplace_mechanism(t_i_vector, epsilon, sensitivity=1.0):
     """
@@ -135,78 +210,6 @@ def laplace_mechanism(t_i_vector, epsilon, sensitivity=1.0):
     t_i_star = t_i_tensor + laplace_noise
 
     return t_i_star
-
-def piecewise_mechanism(t_i_vector, epsilon):
-    """
-    Aplica el Mecanismo por Tramos para datos numéricos unidimensionales.
-
-    Parámetros:
-    - t_i_vector (torch.Tensor o array-like): Vector de entrada de números en el rango [-1, 1].
-    - epsilon (float): Presupuesto de privacidad (debe ser positivo).
-
-    Devuelve:
-    - t_i_star (torch.Tensor): Vector transformado dentro del rango [-C, C].
-    """
-    if epsilon <= 0:
-        raise ValueError("Epsilon debe ser un valor positivo.")
-
-    # Convertir el vector a tensor si no lo es
-    if not isinstance(t_i_vector, torch.Tensor):
-        t_i_tensor = torch.tensor(t_i_vector, dtype=torch.float32)
-    else:
-        t_i_tensor = t_i_vector.clone().detach().float()
-
-    # Asegurar que los valores están en el rango [-1, 1]
-    t_i_tensor = torch.clamp(t_i_tensor, -1.0, 1.0)
-
-    # Calcular e^(epsilon/2) y C
-    e_epsilon_2 = torch.exp(torch.tensor(epsilon / 2.0))
-    C = (e_epsilon_2 + 1.0) / (e_epsilon_2 - 1.0)
-
-    # Calcular l(t_i) y r(t_i)
-    l_t = ((C + 1.0) / 2.0) * t_i_tensor - (C - 1.0) / 2.0
-    r_t = l_t + C - 1.0
-
-    # Generar valores aleatorios para la decisión
-    x = torch.rand_like(t_i_tensor)
-    threshold = e_epsilon_2 / (e_epsilon_2 + 1.0)
-    rand_uniform = torch.rand_like(t_i_tensor)
-
-    # Inicializar el tensor para los valores privatizados
-    t_i_star = torch.empty_like(t_i_tensor)
-
-    # Máscara para x < threshold
-    mask1 = x < threshold
-    low1 = l_t
-    high1 = r_t
-    # Asegurar que high1 > low1
-    high1 = torch.where(high1 <= low1, low1 + 1e-6, high1)
-    t_i_star[mask1] = low1[mask1] + (high1[mask1] - low1[mask1]) * rand_uniform[mask1]
-
-    # Máscara para x >= threshold
-    mask2 = ~mask1
-    interval_choice = torch.rand_like(t_i_tensor) < 0.5
-
-    # Intervalo [-C, l(t_i)]
-    mask2_interval1 = mask2 & interval_choice
-    low2_interval1 = -C
-    high2_interval1 = l_t[mask2_interval1]
-    high2_interval1 = torch.where(high2_interval1 <= low2_interval1,
-                                  low2_interval1 + 1e-6,
-                                  high2_interval1)
-    t_i_star[mask2_interval1] = low2_interval1 + (high2_interval1 - low2_interval1) * rand_uniform[mask2_interval1]
-
-    # Intervalo [r(t_i), C]
-    mask2_interval2 = mask2 & (~interval_choice)
-    low2_interval2 = r_t[mask2_interval2]
-    high2_interval2 = C
-    high2_interval2 = torch.where(high2_interval2 <= low2_interval2,
-                                  low2_interval2 + 1e-6,
-                                  high2_interval2)
-    t_i_star[mask2_interval2] = low2_interval2 + (high2_interval2 - low2_interval2) * rand_uniform[mask2_interval2]
-
-    return t_i_star
-
 def multidimensional_duchi_mechanism(t_i_tensor, epsilon, B=1.0):
     """
     Aplica el mecanismo de Duchi et al. para datos numéricos multidimensionales.
