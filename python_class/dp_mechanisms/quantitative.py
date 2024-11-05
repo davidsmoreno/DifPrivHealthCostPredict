@@ -109,14 +109,17 @@ def piecewise_mechanism(t_i_vector, epsilon):
     Apply the Piecewise Mechanism for one-dimensional numerical data.
 
     Parameters:
-    t_i_vector (np.array): Input vector of numbers within the range [-1, 1].
+    t_i_vector (torch.Tensor or np.array): Input vector of numbers within the range [-1, 1].
     epsilon (float): Privacy budget.
 
     Returns:
-    np.array: Transformed vector within the range [-C, C].
+    torch.Tensor: Transformed vector within the range [-C, C].
     """
-    # Convert the vector to a PyTorch tensor
-    t_i_tensor = torch.tensor(t_i_vector, dtype=torch.float32)
+    # Ensure t_i_vector is a torch.Tensor
+    if not isinstance(t_i_vector, torch.Tensor):
+        t_i_tensor = torch.from_numpy(np.array(t_i_vector)).float()
+    else:
+        t_i_tensor = t_i_vector.float()
 
     # Ensure values are within the range [-1, 1]
     t_i_tensor = torch.clamp(t_i_tensor, -1.0, 1.0)
@@ -172,8 +175,9 @@ def piecewise_mechanism(t_i_vector, epsilon):
                                          high2[mask2_interval2])
     t_i_star[mask2_interval2] = low2[mask2_interval2] + (high2[mask2_interval2] - low2[mask2_interval2]) * rand_uniform[mask2_interval2]
 
-    # Convert the tensor to a NumPy array and return it
-    return t_i_star.numpy()
+    # Return the tensor
+    return t_i_star
+
 
 
 def laplace_mechanism(t_i_vector, epsilon, sensitivity=1.0):
