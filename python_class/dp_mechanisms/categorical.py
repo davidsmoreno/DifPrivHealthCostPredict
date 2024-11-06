@@ -2,7 +2,6 @@ import torch
 import numpy as np
 from sklearn.preprocessing import LabelEncoder
 
-
 def direct_encoding(categorical_data, epsilon):
     """
     Applies direct encoding to categorical data using PyTorch.
