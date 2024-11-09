@@ -178,8 +178,6 @@ def piecewise_mechanism(t_i_vector, epsilon):
     # Return the tensor
     return t_i_star
 
-
-
 def laplace_mechanism(t_i_vector, epsilon, sensitivity=1.0):
     """
     Aplica el mecanismo de Laplace para privacidad diferencial a un vector numérico.
@@ -214,6 +212,7 @@ def laplace_mechanism(t_i_vector, epsilon, sensitivity=1.0):
     t_i_star = t_i_tensor + laplace_noise
 
     return t_i_star
+
 def multidimensional_duchi_mechanism(t_i_tensor, epsilon, B=1.0):
     """
     Aplica el mecanismo de Duchi et al. para datos numéricos multidimensionales.
