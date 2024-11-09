@@ -318,7 +318,6 @@ def multidimensional_mechanism(t_i_tensor, epsilon, mechanism='piecewise', C=1.0
                 x_i_j = laplace_mechanism(t_i_j.unsqueeze(0), epsilon_adjusted)
             else:
                 raise ValueError(f"Mecanismo desconocido: {mechanism}")
-
             # Paso 6: Escalar y asignar el valor a t_i_star[Aj]
             t_i_star[i, idx] = (d / k) * x_i_j.item()
 
