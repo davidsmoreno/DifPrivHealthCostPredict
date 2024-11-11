@@ -56,12 +56,13 @@ def denormalize_from_range(normalized_vector, min_val, max_val, min_range=-1, ma
     denormalized = normalized_vector * (max_val - min_val) + min_val
     return denormalized
 
+
 def duchi_mechanism(t_i_vector, epsilon):
     """
     Applies the Duchi et al. mechanism for differential privacy to a numerical vector.
 
     Parameters:
-    - t_i_vector (torch.Tensor or array-like): Input vector of numbers in the range [-1, 1].
+    - t_i_vector (torch.Tensor or array-like): Input vector of numbers, assumed to be in the range [-1, 1].
     - epsilon (float): Privacy budget (must be positive).
 
     Returns:
@@ -70,39 +71,34 @@ def duchi_mechanism(t_i_vector, epsilon):
     if epsilon <= 0:
         raise ValueError("Epsilon must be a positive value.")
 
-    # Convert the vector to a double-precision tensor
+    # Convert the vector to a double-precision tensor if it’s not already
     if not isinstance(t_i_vector, torch.Tensor):
         t_i_tensor = torch.tensor(t_i_vector, dtype=torch.float64)
     else:
         t_i_tensor = t_i_vector.clone().detach().double()
 
-    # Ensure values are in the range [-1, 1]
-    t_i_tensor = torch.clamp(t_i_tensor, -1.0, 1.0)
-
-    # Compute tanh(epsilon / 2) with high precision
+    # Compute tanh(epsilon / 2) for privacy scaling
     epsilon_half = torch.tensor(epsilon / 2.0, dtype=torch.float64)
     tanh_epsilon_half = torch.tanh(epsilon_half)
 
-    # Handle potential zero in tanh_epsilon_half to avoid division by zero
-    if torch.abs(tanh_epsilon_half) < 1e-10:
-        tanh_epsilon_half = torch.tensor(1e-10, dtype=torch.float64)
-
-    # Compute the probability p(x)
+    # Calculate probability p(x) for Bernoulli sampling
     prob = 0.5 * (1.0 + t_i_tensor * tanh_epsilon_half)
 
-    # Clamp probabilities to [0, 1]
+    # Ensure probabilities are within [0, 1] to avoid sampling issues
     prob = torch.clamp(prob, 0.0, 1.0)
 
-    # Sample Bernoulli variables
+    # Sample Bernoulli variable based on probability
     u = torch.bernoulli(prob)
 
-    # Compute w = 1 / tanh(epsilon / 2)
+    # Calculate the scaling factor
     w = 1.0 / tanh_epsilon_half
 
-    # Compute the privatized value
+    # Apply the privatized transformation
     t_i_star = (2 * u - 1.0) * w
 
     return t_i_star
+
+
 
 def piecewise_mechanism(t_i_vector, epsilon):
     """
@@ -213,115 +209,124 @@ def laplace_mechanism(t_i_vector, epsilon, sensitivity=1.0):
 
     return t_i_star
 
-def multidimensional_duchi_mechanism(t_i_tensor, epsilon, B=1.0):
+def multidimensional_duchi_mechanism(t_i_vector, epsilon, B=1.0, num_samples=1000):
     """
-    Aplica el mecanismo de Duchi et al. para datos numéricos multidimensionales.
+    Applies the Duchi et al. mechanism for differential privacy to a single multidimensional vector with optimizations.
 
-    Parámetros:
-    - t_i_tensor (torch.Tensor): Tensor de entrada de forma (n_samples, d), con valores en el rango [-1, 1].
-    - epsilon (float): Presupuesto de privacidad (debe ser positivo).
-    - B (float): Valor absoluto máximo para las componentes de salida (debe ser positivo, por defecto 1.0).
+    Parameters:
+    - t_i_vector (torch.Tensor): Input vector of shape (d,), with values in the range [-1, 1].
+    - epsilon (float): Privacy budget (must be positive).
+    - B (float): Absolute maximum value for output components (default is 1.0, must be positive).
+    - num_samples (int): Number of samples to approximate T+ and T− (reduces exhaustive search).
 
-    Devuelve:
-    - t_i_star (torch.Tensor): Tensor transformado con privacidad diferencial, de forma (n_samples, d), con valores en {-B, B}^d.
+    Returns:
+    - t_i_star (torch.Tensor): Transformed vector with differential privacy, shape (d,), values in {-B, B}^d.
     """
+    # Validate epsilon and B
     if epsilon <= 0:
-        raise ValueError("Epsilon debe ser un valor positivo.")
+        raise ValueError("Epsilon must be a positive value.")
     if B <= 0:
-        raise ValueError("B debe ser un valor positivo.")
+        raise ValueError("B must be a positive value.")
 
-    # Asegurar que los valores están en el rango [-1, 1]
-    t_i_tensor = torch.clamp(t_i_tensor, -1.0, 1.0)
+    # Ensure values in t_i_vector are within the range [-1, 1]
+    t_i_vector = torch.clamp(t_i_vector, -1.0, 1.0)
+    d = t_i_vector.shape[0]  # Dimension of the vector
 
-    n_samples, d = t_i_tensor.shape
+    # Step 1: Generate random vector v ∈ {−1, 1}^d based on probabilities from t_i_vector
+    prob_v = 0.5 * (1.0 + t_i_vector)  # Probabilities for v[j] = 1
+    random_vals_v = torch.rand(d)
+    v = torch.where(random_vals_v < prob_v, torch.ones(d), -torch.ones(d))  # Vector v ∈ {−1, 1}^d
 
-    # Paso 1: Generar un vector aleatorio v ∈ {−1, 1}^d para cada muestra
-    prob_v = 0.5 * (1.0 + t_i_tensor)  # Probabilidades para v[j] = 1, forma (n_samples, d)
-    random_vals_v = torch.rand(n_samples, d)
-    v = torch.where(random_vals_v < prob_v, torch.ones_like(prob_v), -torch.ones_like(prob_v))
+    # Step 2: Sample T+ and T− with random tuples in {-B, B}^d instead of generating all combinations
+    T_plus = []
+    T_minus = []
 
-    # Paso 3: Generar una variable Bernoulli u que es 1 con probabilidad e^epsilon / (e^epsilon + 1)
+    for _ in range(num_samples):
+        # Generate a random candidate in {-B, B}^d
+        random_bits = torch.randint(0, 2, (d,))  # Randomly generate bits {0, 1} for each component
+        t_candidate = torch.where(random_bits == 1, B, -B)  # Map bits to {-B, B}
+        
+        # Classify based on dot product with v
+        if torch.dot(t_candidate, v) >= 0:
+            T_plus.append(t_candidate)
+        else:
+            T_minus.append(t_candidate)
+
+    # Convert T_plus and T_minus to tensors for efficient random selection
+    T_plus = torch.stack(T_plus) if T_plus else None
+    T_minus = torch.stack(T_minus) if T_minus else None
+
+    # Step 3: Sample a Bernoulli variable u that is 1 with probability e^epsilon / (e^epsilon + 1)
     e_epsilon = torch.exp(torch.tensor(epsilon, dtype=torch.float32))
-    p_u = e_epsilon / (e_epsilon + 1.0)
-    u = torch.bernoulli(torch.full((n_samples,), p_u))
+    prob_u = e_epsilon / (e_epsilon + 1.0)
+    u = torch.bernoulli(torch.tensor(prob_u))
 
-    # Paso 4: Generar t_i_star ∈ {−B, B}^d uniformemente al azar para cada muestra
-    random_vals_t = torch.rand(n_samples, d)
-    t_i_star = torch.where(random_vals_t < 0.5, -B * torch.ones_like(random_vals_t), B * torch.ones_like(random_vals_t))
-
-    # Calcular el producto punto s = t_i_star · v para cada muestra
-    s = torch.sum(t_i_star * v, dim=1)  # Forma (n_samples,)
-
-    # Paso 5: Asegurar que t_i_star pertenece a T+ o T− según el valor de u
-    # Crear una máscara para las muestras que necesitan invertir t_i_star
-    condition = ((u == 1.0) & (s < 0.0)) | ((u == 0.0) & (s > 0.0))
-    # Invertir t_i_star para esas muestras
-    t_i_star[condition] = -t_i_star[condition]
+    # Step 4: Select t_i_star from T+ or T− based on the sampled value of u
+    if u == 1 and T_plus is not None:
+        # Select uniformly at random from T+
+        t_i_star = T_plus[torch.randint(len(T_plus), (1,)).item()]
+    elif T_minus is not None:
+        # Select uniformly at random from T−
+        t_i_star = T_minus[torch.randint(len(T_minus), (1,)).item()]
+    else:
+        # Fallback in case either T_plus or T_minus is empty due to sampling
+        t_i_star = torch.full((d,), B if u == 1 else -B, dtype=torch.float32)
 
     return t_i_star
 
-def multidimensional_mechanism(t_i_tensor, epsilon, mechanism='piecewise', C=1.0):
+
+def multidimensional_mechanism(t_i_vector, epsilon, mechanism='piecewise', C=1.0):
     """
-    Aplica un mecanismo de privacidad diferencial para múltiples atributos numéricos.
+    Applies a differential privacy mechanism to a 1-dimensional vector.
 
-    Parámetros:
-    - t_i_tensor (torch.Tensor o array-like): Tensor de entrada de forma (n_samples, d), con valores en el rango [-1, 1].
-    - epsilon (float): Presupuesto de privacidad (debe ser positivo).
-    - mechanism (str): Mecanismo a utilizar ('piecewise', 'laplace' o 'duchi').
-    - C (float): Constante para escalar los valores de salida (debe ser positivo, por defecto 1.0).
+    Parameters:
+    - t_i_vector (torch.Tensor or array-like): Input vector of shape (n_samples,), with values in the range [-1, 1].
+    - epsilon (float): Privacy budget (must be positive).
+    - mechanism (str): Mechanism to use ('piecewise', 'laplace' or 'duchi').
+    - C (float): Constant to scale the output values (must be positive, default is 1.0).
 
-    Devuelve:
-    - t_i_star (torch.Tensor): Tensor transformado con privacidad diferencial, de forma (n_samples, d), con valores en [-C·d, C·d]^d.
+    Returns:
+    - t_i_star (torch.Tensor): Transformed vector with differential privacy, of shape (n_samples,), with values in the range [-C, C].
     """
     if epsilon <= 0:
-        raise ValueError("Epsilon debe ser un valor positivo.")
+        raise ValueError("Epsilon must be a positive value.")
     if C <= 0:
-        raise ValueError("C debe ser un valor positivo.")
+        raise ValueError("C must be a positive value.")
 
-    # Convertir el vector a tensor si no lo es
-    if not isinstance(t_i_tensor, torch.Tensor):
-        t_i_tensor = torch.tensor(t_i_tensor, dtype=torch.float32)
+    # Convert the input to a tensor if it's not already
+    if not isinstance(t_i_vector, torch.Tensor):
+        t_i_tensor = torch.tensor(t_i_vector, dtype=torch.float32)
     else:
-        t_i_tensor = t_i_tensor.clone().detach().float()
+        t_i_tensor = t_i_vector.clone().detach().float()
 
-    # Asegurar que los valores están en el rango [-1, 1]
+    # Ensure values are within the range [-1, 1]
     t_i_tensor = torch.clamp(t_i_tensor, -1.0, 1.0)
-    n_samples, d = t_i_tensor.shape  # Dimensión del tensor
+    n_samples = t_i_tensor.shape[0]  # Number of samples
 
-    # Paso 1: Inicializar t_i_star como matriz de ceros
-    t_i_star = torch.zeros((n_samples, d), dtype=torch.float32)
+    # Initialize t_i_star as a zero tensor of shape (n_samples,)
+    t_i_star = torch.zeros(n_samples, dtype=torch.float32)
 
-    # Paso 2: Calcular k = max(1, min(d, floor(epsilon / 2.5)))
-    k = max(1, min(d, int(epsilon // 2.5)))
+    # Adjust epsilon for each sample directly
+    epsilon_adjusted = epsilon
 
-    # Paso 3: Para cada muestra, seleccionar k índices aleatoriamente sin reemplazo
+    # Apply the selected mechanism to each sample
     for i in range(n_samples):
-        indices = torch.randperm(d)[:k]
+        # Get the sample value t_i
+        t_i = t_i_tensor[i]
 
-        # Paso 4 y 5: Para cada índice seleccionado, aplicar el mecanismo y asignar el valor
-        for idx in indices:
-            idx = idx.item()  # Convertir el índice a entero de Python
+        # Apply the chosen mechanism with adjusted epsilon
+        if mechanism == 'duchi':
+            x_i = duchi_mechanism(t_i.unsqueeze(0), epsilon_adjusted)
+        elif mechanism == 'piecewise':
+            x_i = piecewise_mechanism(t_i.unsqueeze(0), epsilon_adjusted)
+        else:
+            raise ValueError(f"Unknown mechanism: {mechanism}")
 
-            # Obtener el valor t_i[Aj]
-            t_i_j = t_i_tensor[i, idx]
+        # Scale and assign the value to t_i_star
+        t_i_star[i] = C * x_i.item()
 
-            # Ajustar epsilon para este componente
-            epsilon_adjusted = epsilon / k
-
-            # Aplicar el mecanismo seleccionado con epsilon ajustado
-            if mechanism == 'duchi':
-                x_i_j = duchi_mechanism(t_i_j.unsqueeze(0), epsilon_adjusted)
-            elif mechanism == 'piecewise':
-                x_i_j = piecewise_mechanism(t_i_j.unsqueeze(0), epsilon_adjusted)
-            elif mechanism == 'laplace':
-                x_i_j = laplace_mechanism(t_i_j.unsqueeze(0), epsilon_adjusted)
-            else:
-                raise ValueError(f"Mecanismo desconocido: {mechanism}")
-            # Paso 6: Escalar y asignar el valor a t_i_star[Aj]
-            t_i_star[i, idx] = (d / k) * x_i_j.item()
-
-    # Asegurar que los valores de t_i_star están en el rango [-C·d, C·d]
-    t_i_star = torch.clamp(t_i_star, -C * d, C * d)
+    # Ensure that t_i_star values are within the range [-C, C]
+    t_i_star = torch.clamp(t_i_star, -C, C)
 
     return t_i_star
 
