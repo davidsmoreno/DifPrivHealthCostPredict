@@ -4,90 +4,90 @@ from sklearn.preprocessing import LabelEncoder
 
 def direct_encoding(categorical_data, epsilon):
     """
-    Applies direct encoding to categorical data using PyTorch.
+    Aplica codificación directa a datos categóricos usando PyTorch.
 
-    Parameters:
-    - categorical_data (array-like): Input categorical data.
-    - epsilon (float): Privacy budget.
+    Parámetros:
+    - categorical_data (array-like): Datos categóricos de entrada.
+    - epsilon (float): Presupuesto de privacidad.
 
-    Returns:
-    - np.array: Differentially private transformed categorical data.
+    Devuelve:
+    - np.array: Datos transformados con privacidad diferencial.
     """
-    # Convert the input data to a NumPy array if it's not already
+    # Convertir los datos de entrada a un array de NumPy si no lo son
     if not isinstance(categorical_data, np.ndarray):
         categorical_data = np.array(categorical_data)
 
-    # Ensure the data is of string type (if they are not already)
+    # Asegurarse de que los datos son de tipo string (si no lo son ya)
     categorical_data = categorical_data.astype(str)
 
-    # Encode categories into numerical values using LabelEncoder
+    # Codificar categorías en valores numéricos usando LabelEncoder
     le = LabelEncoder()
     categorical_data_encoded = le.fit_transform(categorical_data)
     inverse_indices = torch.tensor(categorical_data_encoded, dtype=torch.long)
 
-    k = len(le.classes_)  # Number of unique categories
+    k = len(le.classes_)  # Número de categorías únicas
 
-    # Calculate probabilities p and q
+    # Calcular probabilidades p y q
     e_epsilon = torch.exp(torch.tensor(epsilon, dtype=torch.float32))
     p = e_epsilon / (e_epsilon + k - 1)
     q = 1 / (e_epsilon + k - 1)
 
-    # Create a probability matrix initialized with q
+    # Crear una matriz de probabilidades inicializada con q
     probabilities = torch.full((len(categorical_data), k), q)
-    # Assign probability p to the original category of each data point
+    # Asignar probabilidad p a la categoría original de cada dato
     probabilities[torch.arange(len(categorical_data)), inverse_indices] = p
 
-    # Generate uniform random values between 0 and 1
+    # Generar valores aleatorios uniformes entre 0 y 1
     random_vals = torch.rand(len(categorical_data), dtype=torch.float32)
-    # Compute cumulative thresholds for each category
+    # Calcular umbrales acumulativos para cada categoría
     thresholds = torch.cumsum(probabilities, dim=1)
-    # Determine the privatized category index by comparing random values with thresholds
+    # Determinar el índice de categoría privatizado comparando valores aleatorios con umbrales
     privatized_indices = torch.sum(random_vals.unsqueeze(1) > thresholds, dim=1)
 
-    # Map the privatized indices back to the original categories
+    # Mapear los índices privatizados de vuelta a las categorías originales
     privatized_data = le.inverse_transform(privatized_indices.numpy())
     return privatized_data
 
 def optimized_unary_encoding(categorical_data, epsilon):
     """
-    Applies Optimized Unary Encoding (OUE) to categorical data using PyTorch.
+    Aplica Codificación Unaria Optimizada (OUE) a datos categóricos usando PyTorch.
 
-    Parameters:
-    - categorical_data (array-like): Input categorical data.
-    - epsilon (float): Privacy budget.
+    Parámetros:
+    - categorical_data (array-like): Datos categóricos de entrada.
+    - epsilon (float): Presupuesto de privacidad.
 
-    Returns:
-    - np.array: Differentially private transformed categorical data.
+    Devuelve:
+    - np.array: Datos transformados con privacidad diferencial.
     """
-    # Convert the input data to a NumPy array if it's not already
+    # Convertir los datos de entrada a un array de NumPy si no lo son
     if not isinstance(categorical_data, np.ndarray):
         categorical_data = np.array(categorical_data)
     
-    # Ensure the data is of string type (if they are not already)
+    # Asegurarse de que los datos son de tipo string (si no lo son ya)
     categorical_data = categorical_data.astype(str)
     
-    # Encode categories into numerical values using LabelEncoder
+    # Codificar categorías en valores numéricos usando LabelEncoder
     le = LabelEncoder()
     categorical_data_encoded = le.fit_transform(categorical_data)
     
-    # Convert the encoded data to a PyTorch tensor
+    # Convertir los datos codificados a un tensor de PyTorch
     categorical_data_tensor = torch.tensor(categorical_data_encoded, dtype=torch.long)
     
-    # Obtain unique values and inverse indices
+    # Obtener valores únicos e índices inversos
     unique_values = torch.unique(categorical_data_tensor)
     inverse_indices = categorical_data_tensor
-    d = len(unique_values)  # Number of unique categories
+    d = len(unique_values)  # Número de categorías únicas
     
-    # Define probabilities p and q
+    # Definir probabilidades p y q
     p = 0.5
     e_epsilon = torch.exp(torch.tensor(epsilon, dtype=torch.float32))
     q = 1 / (e_epsilon + 1)
     
-    # Create original binary matrix (One-Hot Encoding)
+    # Crear matriz binaria original (Codificación One-Hot)
     binary_matrix = torch.zeros((len(categorical_data_tensor), d), dtype=torch.float32)
     binary_matrix[torch.arange(len(categorical_data_tensor)), inverse_indices] = 1.0
     
-    # Generate perturbed matrix according to probabilities p and q
+    # Generar matriz perturbada según probabilidades p y q
     random_matrix = torch.rand((len(categorical_data_tensor), d), dtype=torch.float32)
     perturbed_matrix = torch.where(
         binary_matrix == 1,
@@ -95,26 +95,26 @@ def optimized_unary_encoding(categorical_data, epsilon):
         (random_matrix < q).float()
     )
     
-    # Select privatized indices
-    # Find indices where perturbed_matrix is 1
+    # Seleccionar índices privatizados
+    # Encontrar índices donde perturbed_matrix es 1
     positive_indices = torch.nonzero(perturbed_matrix, as_tuple=False)
     
-    # Initialize privatized indices with -1
+    # Inicializar índices privatizados con -1
     privatized_indices = torch.full((len(categorical_data_tensor),), -1, dtype=torch.long)
     
-    # For each data point, randomly select one positive category
+    # Para cada punto de datos, seleccionar aleatoriamente una categoría positiva
     for idx in torch.unique(positive_indices[:, 0]):
         indices = positive_indices[positive_indices[:, 0] == idx, 1]
         if len(indices) > 0:
             random_choice = torch.randint(len(indices), (1,))
             privatized_indices[idx] = indices[random_choice]
     
-    # Handle cases where there are no positive categories
+    # Manejar casos donde no hay categorías positivas
     missing_indices = (privatized_indices == -1).nonzero(as_tuple=False).squeeze()
     if missing_indices.numel() > 0:
         privatized_indices[missing_indices] = torch.randint(d, (missing_indices.numel(),))
     
-    # Convert privatized indices back to original categories
+    # Convertir índices privatizados de vuelta a categorías originales
     privatized_data_encoded = privatized_indices.numpy()
     privatized_data = le.inverse_transform(privatized_data_encoded)
     
@@ -122,43 +122,43 @@ def optimized_unary_encoding(categorical_data, epsilon):
 
 def rappor(categorical_data, epsilon):
     """
-    Applies RAPPOR to categorical data using PyTorch.
+    Aplica RAPPOR a datos categóricos usando PyTorch.
 
-    Parameters:
-    - categorical_data (array-like): Input categorical data.
-    - epsilon (float): Privacy budget.
+    Parámetros:
+    - categorical_data (array-like): Datos categóricos de entrada.
+    - epsilon (float): Presupuesto de privacidad.
 
-    Returns:
-    - np.array: Differentially private transformed categorical data.
+    Devuelve:
+    - np.array: Datos transformados con privacidad diferencial.
     """
-    # Convert the input data to a NumPy array if it's not already
+    # Convertir los datos de entrada a un array de NumPy si no lo son
     if not isinstance(categorical_data, np.ndarray):
         categorical_data = np.array(categorical_data)
     
-    # Ensure the data is of string type
+    # Asegurarse de que los datos son de tipo string
     categorical_data = categorical_data.astype(str)
     
-    # Encode categories into numerical values using LabelEncoder
+    # Codificar categorías en valores numéricos usando LabelEncoder
     le = LabelEncoder()
     categorical_data_encoded = le.fit_transform(categorical_data)
     
-    # Convert the encoded data to a PyTorch tensor
+    # Convertir los datos codificados a un tensor de PyTorch
     categorical_data_tensor = torch.tensor(categorical_data_encoded, dtype=torch.long)
     
-    # Obtain unique values and inverse indices
+    # Obtener valores únicos e índices inversos
     unique_values = torch.unique(categorical_data_tensor)
     inverse_indices = categorical_data_tensor
-    d = len(unique_values)  # Number of unique categories
+    d = len(unique_values)  # Número de categorías únicas
 
-    # Calculate the probability f
+    # Calcular la probabilidad f
     e_epsilon = torch.exp(torch.tensor(epsilon, dtype=torch.float32))
     f = 1 / (e_epsilon + 1)
 
-    # Create original binary matrix (One-Hot Encoding)
+    # Crear matriz binaria original (Codificación One-Hot)
     binary_matrix = torch.zeros((len(categorical_data_tensor), d), dtype=torch.float32)
     binary_matrix[torch.arange(len(categorical_data_tensor)), inverse_indices] = 1.0
 
-    # Generate perturbed matrix
+    # Generar matriz perturbada
     random_matrix = torch.rand((len(categorical_data_tensor), d), dtype=torch.float32)
     perturbed_matrix = torch.where(
         binary_matrix == 1,
@@ -166,7 +166,7 @@ def rappor(categorical_data, epsilon):
         (random_matrix < f).float()
     )
 
-    # Select privatized indices
+    # Seleccionar índices privatizados
     positive_indices = torch.nonzero(perturbed_matrix, as_tuple=False)
     privatized_indices = torch.full((len(categorical_data_tensor),), -1, dtype=torch.long)
     for idx in torch.unique(positive_indices[:, 0]):
@@ -175,12 +175,12 @@ def rappor(categorical_data, epsilon):
             random_choice = torch.randint(len(indices), (1,))
             privatized_indices[idx] = indices[random_choice]
     
-    # Handle cases where there are no positive categories
+    # Manejar casos donde no hay categorías positivas
     missing_indices = (privatized_indices == -1).nonzero(as_tuple=False).squeeze()
     if missing_indices.numel() > 0:
         privatized_indices[missing_indices] = torch.randint(d, (missing_indices.numel(),))
     
-    # Convert privatized indices back to original categories
+    # Convertir índices privatizados de vuelta a categorías originales
     privatized_data_encoded = privatized_indices.numpy()
     privatized_data = le.inverse_transform(privatized_data_encoded)
     
